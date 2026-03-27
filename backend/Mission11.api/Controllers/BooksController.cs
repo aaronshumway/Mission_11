@@ -23,7 +23,8 @@ public class BooksController : ControllerBase
     public async Task<ActionResult<PagedBooksResponse>> GetBooks(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 5,
-        [FromQuery] string sortTitle = "asc")
+        [FromQuery] string sortTitle = "asc",
+        [FromQuery(Name = "category")] List<string>? categories = null)
     {
         if (page < 1)
         {
@@ -41,6 +42,12 @@ public class BooksController : ControllerBase
         }
 
         var query = _context.Books.AsQueryable();
+
+        if (categories is { Count: > 0 })
+        {
+            query = query.Where(b => categories.Contains(b.Category));
+        }
+
         query = string.Equals(sortTitle, "desc", StringComparison.OrdinalIgnoreCase)
             ? query.OrderByDescending(b => b.Title)
             : query.OrderBy(b => b.Title);
@@ -52,6 +59,18 @@ public class BooksController : ControllerBase
             .ToListAsync();
 
         return Ok(new PagedBooksResponse(books, totalCount, page, pageSize));
+    }
+
+    [HttpGet("categories")]
+    public async Task<ActionResult<IReadOnlyList<string>>> GetCategories()
+    {
+        var categories = await _context.Books
+            .Select(b => b.Category)
+            .Distinct()
+            .OrderBy(c => c)
+            .ToListAsync();
+
+        return Ok(categories);
     }
 }
 

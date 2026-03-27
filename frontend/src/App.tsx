@@ -1,14 +1,15 @@
-import { BookList } from './BookList'
-import './App.css'
+import { Navigate, Route, Routes } from 'react-router-dom'
+import { CartPage } from './pages/CartPage'
+import { BooksPage } from './pages/BooksPage'
 
 function App() {
   return (
-    <div className="container py-4 text-start">
-      <header className="mb-4">
-        <h1 className="h2 mb-0">Online Bookstore</h1>
-      </header>
-      <BookList />
-    </div>
+    <Routes>
+      <Route path="/" element={<BooksPage />} />
+      <Route path="/books" element={<BooksPage />} />
+      <Route path="/cart" element={<CartPage />} />
+      <Route path="*" element={<Navigate to="/books" replace />} />
+    </Routes>
   )
 }
 

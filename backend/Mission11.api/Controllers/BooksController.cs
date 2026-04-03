@@ -72,6 +72,68 @@ public class BooksController : ControllerBase
 
         return Ok(categories);
     }
+
+    // Admin create — new row in the Books table.
+    [HttpPost]
+    public async Task<ActionResult<Book>> CreateBook([FromBody] BookInputDto dto)
+    {
+        var book = new Book
+        {
+            Title = dto.Title,
+            Author = dto.Author,
+            Publisher = dto.Publisher,
+            Isbn = dto.Isbn,
+            Classification = dto.Classification,
+            Category = dto.Category,
+            PageCount = dto.PageCount,
+            Price = dto.Price,
+        };
+
+        _context.Books.Add(book);
+        await _context.SaveChangesAsync();
+
+        return Ok(book);
+    }
+
+    // Admin update — same fields as create, keyed by id.
+    [HttpPut("{id:int}")]
+    public async Task<ActionResult<Book>> UpdateBook(int id, [FromBody] BookInputDto dto)
+    {
+        var book = await _context.Books.FindAsync(id);
+        if (book == null)
+        {
+            return NotFound();
+        }
+
+        book.Title = dto.Title;
+        book.Author = dto.Author;
+        book.Publisher = dto.Publisher;
+        book.Isbn = dto.Isbn;
+        book.Classification = dto.Classification;
+        book.Category = dto.Category;
+        book.PageCount = dto.PageCount;
+        book.Price = dto.Price;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(book);
+    }
+
+    // Admin delete — 404 if the id is not there.
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> DeleteBook(int id)
+    {
+        var book = await _context.Books.FindAsync(id);
+        if (book == null)
+        {
+            return NotFound();
+        }
+
+        _context.Books.Remove(book);
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
 }
 
 public record PagedBooksResponse(

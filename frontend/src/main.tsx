@@ -5,6 +5,7 @@ import { CartProvider } from './context/CartContext'
 import './index.css'
 import App from './App.tsx'
 
+// App shell: router for pages, cart context for anything that needs the cart.
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>

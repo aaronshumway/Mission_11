@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { API_BASE } from '../apiConfig'
-import { CartOffcanvas } from '../components/CartOffcanvas'
-import { CartSummary } from '../components/CartSummary'
+import { useEffect, useState } from 'react'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { fetchBooksPage, fetchCategories } from '../api/booksApi'
+import { deleteBook, updateBook } from '../api/booksAdmin'
+import { BookForm } from '../components/BookForm'
 import { CategoryFilter } from '../components/CategoryFilter'
-import { useCart } from '../context/CartContext'
-import type { Book, PagedBooksResponse } from '../types/book'
+import type { Book, BookInput, PagedBooksResponse } from '../types/book'
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25] as const
 
@@ -16,9 +15,13 @@ function formatPrice(value: number): string {
   }).format(value)
 }
 
-// Public catalog: paging, category filters, cart actions, link over to admin.
+type FlashMessage = { type: 'success' | 'danger'; message: string }
 
-export function BooksPage() {
+// Admin home: browse with filters, edit in place, add via /adminbooks/new, delete with a modal.
+
+export function AdminBooksPage() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const initialPage = Number(searchParams.get('page') ?? '1')
   const initialPageSize = Number(searchParams.get('pageSize') ?? '5')
@@ -40,8 +43,50 @@ export function BooksPage() {
   )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const { addToCart, cartItems, totalItems, totalPrice } = useCart()
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [refresh, setRefresh] = useState(0)
+  const [flash, setFlash] = useState<FlashMessage | null>(null)
 
+  const [editingBook, setEditingBook] = useState<Book | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Book | null>(null)
+  const [deletePending, setDeletePending] = useState(false)
+
+  // Success messages from navigation (e.g. after adding a book) land here once.
+  useEffect(() => {
+    const st = location.state as { flash?: FlashMessage } | null
+    if (st?.flash) {
+      setFlash(st.flash)
+      navigate(`${location.pathname}${location.search}`, { replace: true, state: {} })
+    }
+  }, [location, navigate])
+
+  useEffect(() => {
+    if (!flash) {
+      return
+    }
+    const timer = window.setTimeout(() => setFlash(null), 6000)
+    return () => window.clearTimeout(timer)
+  }, [flash])
+
+  useEffect(() => {
+    if (!deleteTarget) {
+      return
+    }
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !deletePending) {
+        setDeleteTarget(null)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = prevOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [deleteTarget, deletePending])
+
+  // Keep filters and pagination in the query string so refresh and links stay consistent.
   useEffect(() => {
     const params = new URLSearchParams()
     params.set('page', String(page))
@@ -52,17 +97,12 @@ export function BooksPage() {
   }, [page, pageSize, sortTitle, selectedCategories, setSearchParams])
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/books/categories`)
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error('Failed loading categories')
-        }
-        return res.json() as Promise<string[]>
-      })
-      .then((data) => setCategories(data))
+    fetchCategories()
+      .then(setCategories)
       .catch(() => setCategories([]))
   }, [])
 
+  // Table data: bumps when we edit or delete so the row reflects the server.
   useEffect(() => {
     const controller = new AbortController()
     const params = new URLSearchParams({
@@ -75,14 +115,8 @@ export function BooksPage() {
     setLoading(true)
     setError(null)
 
-    fetch(`${API_BASE}/api/books?${params.toString()}`, { signal: controller.signal })
-      .then((res) => {
-        if (!res.ok) {
-          throw new Error(`Request failed (${res.status})`)
-        }
-        return res.json() as Promise<PagedBooksResponse>
-      })
-      .then((data) => {
+    fetchBooksPage(params, controller.signal)
+      .then((data: PagedBooksResponse) => {
         setBooks(data.books)
         setTotalCount(data.totalCount)
       })
@@ -97,7 +131,7 @@ export function BooksPage() {
       .finally(() => setLoading(false))
 
     return () => controller.abort()
-  }, [page, pageSize, sortTitle, selectedCategories])
+  }, [page, pageSize, sortTitle, selectedCategories, refresh])
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   useEffect(() => {
@@ -125,33 +159,86 @@ export function BooksPage() {
     setPage(1)
   }
 
-  const cartLink = useMemo(() => {
-    const returnParams = new URLSearchParams({
-      page: String(page),
-      pageSize: String(pageSize),
-      sortTitle,
-    })
-    selectedCategories.forEach((cat) => returnParams.append('category', cat))
-    return `/cart?returnTo=${encodeURIComponent(`/books?${returnParams.toString()}`)}`
-  }, [page, pageSize, sortTitle, selectedCategories])
+  async function handleFormSubmit(input: BookInput) {
+    setActionError(null)
+    try {
+      if (editingBook) {
+        await updateBook(editingBook.bookId, input)
+        setEditingBook(null)
+        setFlash({ type: 'success', message: 'Book updated successfully.' })
+        setRefresh((r) => r + 1)
+      }
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Something went wrong')
+    }
+  }
+
+  function handleCancelForm() {
+    setEditingBook(null)
+    setActionError(null)
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) {
+      return
+    }
+    setActionError(null)
+    setDeletePending(true)
+    try {
+      const title = deleteTarget.title
+      await deleteBook(deleteTarget.bookId)
+      setDeleteTarget(null)
+      setFlash({
+        type: 'success',
+        message: `Deleted "${title}".`,
+      })
+      setRefresh((r) => r + 1)
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Delete failed')
+      setDeleteTarget(null)
+    } finally {
+      setDeletePending(false)
+    }
+  }
+
+  const showEditForm = editingBook !== null
 
   return (
     <div className="container py-4 text-start">
       <header className="mb-4 d-flex flex-wrap justify-content-between align-items-center gap-2">
-        <h1 className="h2 mb-0">Online Bookstore</h1>
-        <Link className="btn btn-outline-secondary btn-sm" to="/adminbooks">
-          Admin
+        <div>
+          <h1 className="h2 mb-0">Admin — Books</h1>
+          <p className="text-muted small mb-0">Add, edit, or remove books in the database.</p>
+        </div>
+        <Link className="btn btn-outline-secondary btn-sm" to="/books">
+          Back to storefront
         </Link>
       </header>
+
+      {flash && (
+        <div
+          className={`alert ${flash.type === 'success' ? 'alert-success' : 'alert-danger'} alert-dismissible fade show`}
+          role="status"
+        >
+          {flash.message}
+          <button
+            type="button"
+            className="btn-close"
+            aria-label="Dismiss"
+            onClick={() => setFlash(null)}
+          />
+        </div>
+      )}
+
       <div className="row g-4">
         <div className="col-12 col-md-4 col-lg-3">
           <button
             className="btn btn-outline-secondary w-100 mb-2 d-flex justify-content-between align-items-center"
             type="button"
             data-bs-toggle="collapse"
-            data-bs-target="#categoryFilterCollapse"
+            data-bs-target="#adminCategoryFilterCollapse"
             aria-expanded="true"
-            aria-controls="categoryFilterCollapse"
+            aria-controls="adminCategoryFilterCollapse"
           >
             <span>
               Filter
@@ -163,7 +250,7 @@ export function BooksPage() {
               ▼
             </span>
           </button>
-          <div className="collapse show" id="categoryFilterCollapse">
+          <div className="collapse show" id="adminCategoryFilterCollapse">
             <CategoryFilter
               categories={categories}
               selectedCategories={selectedCategories}
@@ -172,14 +259,37 @@ export function BooksPage() {
             />
           </div>
         </div>
+
         <div className="col-12 col-md-8 col-lg-9">
+          <div className="d-flex flex-wrap gap-2 mb-3">
+            <Link className="btn btn-primary" to="/adminbooks/new">
+              Add book
+            </Link>
+          </div>
+
+          {showEditForm && (
+            <BookForm
+              mode="edit"
+              initialBook={editingBook}
+              categoryOptions={categories}
+              onSubmit={handleFormSubmit}
+              onCancel={handleCancelForm}
+            />
+          )}
+
+          {actionError && (
+            <div className="alert alert-warning" role="alert">
+              {actionError}
+            </div>
+          )}
+
           <div className="row g-3 mb-3 align-items-end">
             <div className="col-auto">
-              <label htmlFor="pageSize" className="form-label mb-1">
+              <label htmlFor="adminPageSize" className="form-label mb-1">
                 Results per page
               </label>
               <select
-                id="pageSize"
+                id="adminPageSize"
                 className="form-select form-select-sm"
                 value={pageSize}
                 onChange={(e) => {
@@ -207,25 +317,11 @@ export function BooksPage() {
               </button>
             </div>
             <div className="col text-muted small">
-              {totalCount > 0 ? `Showing ${start}–${end} of ${totalCount}` : !loading ? 'No books' : ''}
-            </div>
-            <div className="col-12 col-lg-4 ms-lg-auto">
-              <div className="d-flex flex-wrap gap-2 justify-content-lg-end align-items-start">
-                <button
-                  type="button"
-                  className="btn btn-outline-primary btn-sm"
-                  data-bs-toggle="offcanvas"
-                  data-bs-target="#cartPreview"
-                  aria-controls="cartPreview"
-                >
-                  Preview cart
-                </button>
-                <CartSummary
-                  totalItems={totalItems}
-                  totalPrice={totalPrice}
-                  cartLink={cartLink}
-                />
-              </div>
+              {totalCount > 0
+                ? `Showing ${start}–${end} of ${totalCount}`
+                : !loading
+                  ? 'No books'
+                  : ''}
             </div>
           </div>
 
@@ -250,7 +346,7 @@ export function BooksPage() {
                     <th>Category</th>
                     <th className="text-end">Pages</th>
                     <th className="text-end">Price</th>
-                    <th className="text-end">Cart</th>
+                    <th className="text-end">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -264,19 +360,23 @@ export function BooksPage() {
                       <td>{book.category}</td>
                       <td className="text-end">{book.pageCount}</td>
                       <td className="text-end">{formatPrice(book.price)}</td>
-                      <td className="text-end">
+                      <td className="text-end text-nowrap">
                         <button
                           type="button"
-                          className="btn btn-sm btn-success"
-                          onClick={() =>
-                            addToCart({
-                              bookId: book.bookId,
-                              title: book.title,
-                              price: book.price,
-                            })
-                          }
+                          className="btn btn-sm btn-outline-primary me-1"
+                          onClick={() => {
+                            setEditingBook(book)
+                            setActionError(null)
+                          }}
                         >
-                          Add
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-danger"
+                          onClick={() => setDeleteTarget(book)}
+                        >
+                          Delete
                         </button>
                       </td>
                     </tr>
@@ -287,7 +387,7 @@ export function BooksPage() {
           )}
 
           {!loading && totalPages > 1 && (
-            <nav aria-label="Book pages">
+            <nav aria-label="Admin book pages">
               <ul className="pagination pagination-sm flex-wrap">
                 <li className={`page-item ${safePage <= 1 ? 'disabled' : ''}`}>
                   <button
@@ -319,20 +419,71 @@ export function BooksPage() {
               </ul>
             </nav>
           )}
-
-          <div className="mt-3">
-            <Link className="btn btn-primary" to={cartLink}>
-              Go to Cart
-            </Link>
-          </div>
         </div>
       </div>
-      <CartOffcanvas
-        cartItems={cartItems}
-        totalItems={totalItems}
-        totalPrice={totalPrice}
-        cartLink={cartLink}
-      />
+
+      {/* Plain Bootstrap markup; no JS modal API, just controlled visibility. */}
+      {deleteTarget && (
+        <>
+          <div
+            className="modal fade show d-block"
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admin-delete-book-title"
+          >
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content border-0 shadow">
+                <div className="modal-header border-0 pb-0">
+                  <h2 className="modal-title h5" id="admin-delete-book-title">
+                    Delete this book?
+                  </h2>
+                  <button
+                    type="button"
+                    className="btn-close"
+                    aria-label="Close"
+                    disabled={deletePending}
+                    onClick={() => setDeleteTarget(null)}
+                  />
+                </div>
+                <div className="modal-body pt-2">
+                  <p className="mb-0 text-secondary">
+                    <span className="text-dark fw-medium">{deleteTarget.title}</span> will be
+                    removed from the catalog permanently. This cannot be undone.
+                  </p>
+                </div>
+                <div className="modal-footer border-0 pt-0">
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary"
+                    disabled={deletePending}
+                    onClick={() => setDeleteTarget(null)}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    disabled={deletePending}
+                    onClick={confirmDelete}
+                  >
+                    {deletePending ? 'Deleting…' : 'Delete book'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div
+            className="modal-backdrop fade show"
+            aria-hidden="true"
+            onClick={() => {
+              if (!deletePending) {
+                setDeleteTarget(null)
+              }
+            }}
+          />
+        </>
+      )}
     </div>
   )
 }

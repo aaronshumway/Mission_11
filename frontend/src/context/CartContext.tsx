@@ -14,6 +14,8 @@ interface CartContextType {
 const CART_KEY = 'bookstore_cart'
 const CartContext = createContext<CartContextType | undefined>(undefined)
 
+// Session-only cart so a refresh keeps items but closing the tab clears them.
+
 export function CartProvider({ children }: { children: React.ReactNode }) {
   const [cartItems, setCartItems] = useState<CartItem[]>(() => {
     const raw = sessionStorage.getItem(CART_KEY)

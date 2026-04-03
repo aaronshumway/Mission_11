@@ -5,6 +5,8 @@ interface CategoryFilterProps {
   onClearCategories: () => void
 }
 
+// Checkbox list wired to URL state on the books pages.
+
 export function CategoryFilter({
   categories,
   selectedCategories,

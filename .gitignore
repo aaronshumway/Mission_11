@@ -18,6 +18,8 @@ lerna-debug.log*
 .env
 .env.*
 !.env.example
+# Production API URL for Vite (public); must be tracked so Azure build embeds it.
+!frontend/.env.production
 
 # .NET build, NuGet, publish
 **/bin/

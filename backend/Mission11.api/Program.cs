@@ -9,15 +9,34 @@ builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
-// CORS: allow the Vite dev server origin (must match frontend dev URL in vite.config.ts).
+// CORS: Vite dev origin is in appsettings. Add deployed frontend URL via Cors:AdditionalOrigins
+// (semicolon-separated) or Azure App Service setting Cors__AdditionalOrigins.
+var corsOrigins = new List<string>(
+    builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? []);
+var additional = builder.Configuration["Cors:AdditionalOrigins"];
+if (!string.IsNullOrWhiteSpace(additional))
+{
+    foreach (var part in additional.Split(
+                 ';',
+                 StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (!corsOrigins.Contains(part, StringComparer.OrdinalIgnoreCase))
+        {
+            corsOrigins.Add(part);
+        }
+    }
+}
+
+if (corsOrigins.Count == 0)
+{
+    corsOrigins.Add("http://localhost:5173");
+}
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(
-        "ViteDev",
-        policy =>
-        {
-            policy.WithOrigins("http://localhost:5173").AllowAnyHeader().AllowAnyMethod();
-        });
+        "Frontend",
+        policy => policy.WithOrigins(corsOrigins.ToArray()).AllowAnyHeader().AllowAnyMethod());
 });
 
 var dbPath = Path.Combine(builder.Environment.ContentRootPath, "Bookstore.sqlite");
@@ -36,7 +55,7 @@ else
     app.UseHttpsRedirection();
 }
 
-app.UseCors("ViteDev");
+app.UseCors("Frontend");
 
 app.UseAuthorization();
 

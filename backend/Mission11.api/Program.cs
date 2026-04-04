@@ -45,6 +45,9 @@ builder.Services.AddDbContext<BookstoreDbContext>(options =>
 
 var app = builder.Build();
 
+// CORS must run early (before redirects) or browsers see responses without Access-Control-Allow-Origin.
+app.UseCors("Frontend");
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
@@ -54,8 +57,6 @@ else
 {
     app.UseHttpsRedirection();
 }
-
-app.UseCors("Frontend");
 
 app.UseAuthorization();
 
